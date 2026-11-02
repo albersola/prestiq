@@ -1,0 +1,61 @@
+{
+  "clients": {
+    "alice-vm": {
+      "token_sha256": "2ef62ec74c85b1ff371bd1f1b12599643a0ed7fe5927eeef749d71b0faf006be",
+      "credentials": {
+        "github": "mock-pat-alice"
+      }
+    },
+    "bob-vm": {
+      "token_sha256": "87305692fdb87e307c38827f3fc0d3f172dcbdb0415b5d085dace6711d489678",
+      "credentials": {
+        "github": "mock-pat-bob"
+      }
+    },
+    "carol-vm": {
+      "token_sha256": "b17539b70a9999dee9b0cf913cca7e74310d0ec2be78575165940b7a4f6d6fac",
+      "credentials": {}
+    }
+  },
+  "routes": [
+    {
+      "id": "github-git",
+      "match": {
+        "regex": "^/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/(?:info/refs|git-upload-pack|git-receive-pack)$"
+      },
+      "upstream": "http://mock-github:8000",
+      "client_auth": {
+        "challenge": "basic"
+      },
+      "credential": {
+        "source": "github",
+        "type": "basic",
+        "username": "x-access-token"
+      }
+    },
+    {
+      "id": "github-rest",
+      "match": {
+        "prefix": "/api/v3"
+      },
+      "upstream": "http://mock-github:8001",
+      "strip_prefix": "/api/v3",
+      "credential": {
+        "source": "github",
+        "type": "bearer"
+      }
+    },
+    {
+      "id": "github-graphql",
+      "match": {
+        "exact": "/api/graphql"
+      },
+      "upstream": "http://mock-github:8001",
+      "replace_path": "/graphql",
+      "credential": {
+        "source": "github",
+        "type": "bearer"
+      }
+    }
+  ]
+}

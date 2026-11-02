@@ -1,0 +1,24 @@
+services:
+  gateway:
+    build: .
+    restart: unless-stopped
+    # Unprivileged, with the uid that owns data/ on the host.
+    user: "${GATEWAY_UID:-1000}:${GATEWAY_GID:-1000}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "${HTTP_BIND:-127.0.0.1:8080}:8080"
+      - "${HTTPS_BIND:-8443}:8443"
+    environment:
+      CONFIG_TTL: "5"
+      TLS_CERT: ${TLS_CERT:-fullchain.pem}
+      TLS_KEY: ${TLS_KEY:-privkey.pem}
+    volumes:
+      - ./data:/etc/gateway/data:ro
+      - ${TLS_DIR:-./data/tls}:/etc/gateway/tls:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/_healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

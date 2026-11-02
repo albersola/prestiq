@@ -1,0 +1,51 @@
+{
+  "clients": {
+    "alice-vm": {
+      "token_sha256": "<sha256-del-token-de-la-vm>",
+      "credentials": {
+        "github": "<PAT-de-GitHub>"
+      }
+    }
+  },
+  "routes": [
+    {
+      "id": "github-git",
+      "match": {
+        "regex": "^/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/(?:info/refs|git-upload-pack|git-receive-pack)$"
+      },
+      "upstream": "https://github.com",
+      "client_auth": {
+        "challenge": "basic"
+      },
+      "credential": {
+        "source": "github",
+        "type": "basic",
+        "username": "x-access-token"
+      }
+    },
+    {
+      "id": "github-rest",
+      "match": {
+        "prefix": "/api/v3"
+      },
+      "upstream": "https://api.github.com",
+      "strip_prefix": "/api/v3",
+      "credential": {
+        "source": "github",
+        "type": "bearer"
+      }
+    },
+    {
+      "id": "github-graphql",
+      "match": {
+        "exact": "/api/graphql"
+      },
+      "upstream": "https://api.github.com",
+      "replace_path": "/graphql",
+      "credential": {
+        "source": "github",
+        "type": "bearer"
+      }
+    }
+  ]
+}
