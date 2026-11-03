@@ -186,6 +186,8 @@ check("configuration storage indexes clients and reuses its snapshot", function(
 end)
 
 check("configuration storage returns 503 without any readable configuration", function()
+    ngx.shared.gateway_config:flush_all()
+    ngx.shared.gateway_config:flush_expired()
     local previous = package.loaded["gateway.config"]
     local getenv = os.getenv
     package.loaded["gateway.config"] = nil
@@ -199,6 +201,86 @@ check("configuration storage returns 503 without any readable configuration", fu
     local snapshot, err = config.get()
     assert(not snapshot)
     equal(err.status, 503)
+end)
+
+-- Independent module instances model workers with separate Lua state, while
+-- using the real OpenResty shared dictionary. Replace only the file boundary.
+local function config_scenario(fn)
+    local shared = ngx.shared.gateway_config
+    shared:flush_all()
+    shared:flush_expired()
+    local open = io.open
+    local contents = raw
+    local reads = 0
+    io.open = function()
+        reads = reads + 1
+        if not contents then return nil, "missing file" end
+        return { read = function() return contents end, close = function() end }
+    end
+    local ok, err = pcall(fn, function(value)
+        contents = value
+        shared:delete("checked_at") -- Advance to the next reload without sleeping.
+    end, function()
+        return assert(loadfile("/opt/gateway/config.lua"))()
+    end, function() return reads end)
+    io.open = open
+    shared:flush_all()
+    shared:flush_expired()
+    assert(ok, err)
+end
+
+check("configuration publishes rotations to both idle and existing workers", function()
+    config_scenario(function(update, worker, reads)
+        local first, idle = worker(), worker()
+        local old = assert(first.get())
+        local rotated = fixture()
+        rotated.clients["alice-vm"].credentials.github = "mock-pat-bob"
+        update(assert(cjson.encode(rotated)))
+        local publisher = worker()
+        assert(publisher.get())
+        local expected_reads = reads()
+        local hash = rotated.clients["alice-vm"].token_sha256
+        equal(assert(idle.get()).clients_by_hash[hash].credentials.github, "mock-pat-bob")
+        equal(assert(first.get()).clients_by_hash[hash].credentials.github, "mock-pat-bob")
+        equal(reads(), expected_reads) -- One shared TTL, no per-worker file reads.
+        equal(old.clients_by_hash[hash].credentials.github, "mock-pat-alice")
+        -- Repeat the original failure with a worker that has never loaded a copy.
+        update("{invalid json")
+        equal(assert(worker().get()).clients_by_hash[hash].credentials.github, "mock-pat-bob")
+        local invalid = fixture()
+        invalid.clients["alice-vm"].credentials.github = "invalid\r\nheader"
+        update(assert(cjson.encode(invalid)))
+        equal(assert(worker().get()).clients_by_hash[hash].credentials.github, "mock-pat-bob")
+        update(nil)
+        equal(assert(worker().get()).clients_by_hash[hash].credentials.github, "mock-pat-bob")
+        update(raw)
+        equal(assert(idle.get()).clients_by_hash[hash].credentials.github, "mock-pat-alice")
+    end)
+end)
+
+check("configuration preserves the shared snapshot when a replacement exceeds capacity", function()
+    config_scenario(function(update, worker)
+        assert(worker().get())
+        local huge = fixture()
+        huge.clients["alice-vm"].credentials.github = string.rep("x", 11 * 1024 * 1024)
+        update(assert(cjson.encode(huge)))
+        local hash = huge.clients["alice-vm"].token_sha256
+        equal(assert(worker().get()).clients_by_hash[hash].credentials.github, "mock-pat-alice")
+        equal(ngx.shared.gateway_config:get("snapshot:" .. ngx.shared.gateway_config:get("active")), raw)
+    end)
+end)
+
+check("configuration recovers after startup without a valid file", function()
+    config_scenario(function(update, worker)
+        update("{invalid json")
+        local first = worker()
+        local value, err = first.get()
+        assert(not value)
+        equal(err.status, 503)
+        update(raw)
+        assert(worker().get())
+        assert(first.get())
+    end)
 end)
 
 io.write(string.format("\n%d module tests passed, %d failed\n", passed, failed))
